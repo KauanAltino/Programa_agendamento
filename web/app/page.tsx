@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { supabase } from "@/lib/supabase";
 
 type BookingSlotRow = {
@@ -432,22 +433,32 @@ export default function Home() {
 
   return (
     <div className="relative min-h-screen">
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute inset-0 bg-[url('/equipe-liturgia-bg.jpg')] bg-cover bg-center bg-no-repeat opacity-20" />
-        <div className="absolute inset-0 bg-gradient-to-b from-white/86 via-white/84 to-[#fffdf8]/90" />
-        <div className="absolute inset-0 backdrop-blur-[1.5px]" />
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <div className="absolute inset-0 bg-[url('/equipe-liturgia-bg-MOBILE.jpg')] bg-cover bg-center bg-no-repeat md:hidden" />
+        <div className="absolute inset-0 hidden bg-[url('/equipe-liturgia-bg.jpg')] bg-cover bg-center bg-no-repeat md:block" />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-white/10 to-[#fffdf8]/10"  />
+        <div className="absolute inset-0 backdrop-blur-[2px]" />
       </div>
 
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+      <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <header className="panel-glow fade-up rounded-3xl border border-white/70 px-6 py-8 text-center sm:px-10">
         <p className="mb-3 inline-flex rounded-full bg-[var(--brand-soft)] px-4 py-1 text-xs font-semibold tracking-[0.2em] text-[var(--brand)] uppercase">
           Agenda Oficial
         </p>
-        <h1 className="text-3xl leading-tight text-slate-900 sm:text-4xl lg:text-5xl">
-          3° CONVERSA - ENCONTRO DE CASAIS
-        </h1>
-        <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-600 sm:text-base">
-          Reserva simples sem login. Agende e consulte pelo telefone.
+        <div className="mx-auto flex max-w-5xl items-center justify-center gap-3 sm:gap-4">
+          <Image
+            src="/equipe-liturgia-bg-logo.jpg"
+            alt="Logo do encontro"
+            width={64}
+            height={64}
+            className="h-12 w-12 rounded-full border border-white/70 object-cover shadow-sm sm:h-16 sm:w-16"
+          />
+          <h1 className="text-3xl leading-tight text-slate-900 sm:text-4xl lg:text-5xl">
+            3° CONVERSA - ENCONTRO DE CASAIS
+          </h1>
+        </div>
+        <p className="mx-auto mt-4 text-sm text-slate-600 sm:text-base">
+          Reserva de horários para a 3° Conversa - Encontro de Casais.
         </p>
       </header>
 
@@ -622,10 +633,10 @@ export default function Home() {
               ) : (
                 "Confirmar agendamento"
               )}
-            </button>
+            </button>            
           </form>
 
-          <div className="mt-6 border-t border-slate-200 pt-4">
+          <div className="mt-6 border-t border-slate-400 pt-4">
             <button
               type="button"
               onClick={() => {
