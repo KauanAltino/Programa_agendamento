@@ -3,16 +3,28 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Booking = {
+type BookingSlotRow = {
   slot_time: string;
 };
 
-type BookingForCancel = {
+type BookingLookupRow = {
   id: string;
   event_date: string;
   slot_time: string;
   person1: string;
   person2: string;
+  phone1: string;
+};
+
+type ReservationDraft = {
+  person1: string;
+  person2: string;
+  phone: string;
+};
+
+type RescheduleDraft = {
+  newDate: string;
+  newSlot: string;
 };
 
 type DateOption = {
@@ -41,8 +53,8 @@ const LUNCH_END = 13 * 60;
 const defaultFormState = {
   person1: "",
   person2: "",
-  ddd1: "",
-  number1: "",
+  ddd: "",
+  number: "",
 };
 
 const toTimeLabel = (minutes: number) => {
@@ -84,16 +96,24 @@ export default function Home() {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [bookings, setBookings] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState(defaultFormState);
+
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupDdd, setLookupDdd] = useState("");
+  const [lookupNumber, setLookupNumber] = useState("");
+  const [lookupResult, setLookupResult] = useState<BookingLookupRow | null>(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState<BookingLookupRow | null>(null);
+  const [phoneConfirmDraft, setPhoneConfirmDraft] = useState<ReservationDraft | null>(null);
+  const [rescheduleConfirmDraft, setRescheduleConfirmDraft] = useState<RescheduleDraft | null>(null);
+
   const [isLoadingSlots, setIsLoadingSlots] = useState(Boolean(supabase));
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [cancelDdd, setCancelDdd] = useState("");
-  const [cancelNumber, setCancelNumber] = useState("");
-  const [cancelBookings, setCancelBookings] = useState<BookingForCancel[]>([]);
-  const [isSearchingCancel, setIsSearchingCancel] = useState(false);
+  const [isLookingUp, setIsLookingUp] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
-  const [cancelFeedback, setCancelFeedback] = useState<string | null>(null);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lookupMessage, setLookupMessage] = useState<string | null>(null);
 
   const slots = useMemo(() => getSlotsForDate(selectedDate), [selectedDate]);
 
@@ -103,7 +123,8 @@ export default function Home() {
     const { data, error } = await supabase
       .from("bookings")
       .select("slot_time")
-      .eq("event_date", date);
+      .eq("event_date", date)
+      .eq("status", "active");
 
     if (error) {
       setErrorMessage("Erro ao buscar horários. Atualize a página e tente novamente.");
@@ -112,7 +133,7 @@ export default function Home() {
     }
 
     const reserved = new Set(
-      (data as Booking[]).map((booking) => booking.slot_time.slice(0, 8))
+      (data as BookingSlotRow[]).map((booking) => booking.slot_time.slice(0, 8))
     );
 
     setBookings(reserved);
@@ -159,93 +180,61 @@ export default function Home() {
   );
 
   const canBook = !!supabase;
+  const insertNewBooking = useCallback(
+    async (draft: ReservationDraft, date: string, slot: string) => {
+      if (!supabase) return { ok: false as const, reason: "no-client" };
 
-  const loadBookingsByPhone = useCallback(async (phone: string) => {
-    if (!supabase) return;
+      const { data: existingByPhone, error: checkPhoneError } = await supabase
+        .from("bookings")
+        .select("id")
+        .eq("phone1", draft.phone)
+        .eq("status", "active")
+        .limit(1);
 
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("id, event_date, slot_time, person1, person2")
-      .or(`phone1.eq.${phone},phone2.eq.${phone}`)
-      .order("event_date", { ascending: true })
-      .order("slot_time", { ascending: true });
+      if (checkPhoneError) {
+        return { ok: false as const, reason: "phone-check" };
+      }
 
-    if (error) {
-      setCancelFeedback("Erro ao buscar agendamentos para cancelamento.");
-      setCancelBookings([]);
-      return;
-    }
+      if (existingByPhone && existingByPhone.length > 0) {
+        return { ok: false as const, reason: "phone-exists" };
+      }
 
-    const rows = (data as BookingForCancel[]) ?? [];
-    if (rows.length === 0) {
-      setCancelFeedback("Nenhum agendamento encontrado para esse telefone.");
-      setCancelBookings([]);
-      return;
-    }
+      const { error } = await supabase.from("bookings").insert({
+        event_date: date,
+        slot_time: slot,
+        person1: draft.person1,
+        person2: draft.person2,
+        phone1: draft.phone,
+        phone2: "",
+        status: "active",
+      });
 
-    setCancelFeedback(null);
-    setCancelBookings(rows);
-  }, []);
+      if (error) {
+        return { ok: false as const, reason: "insert" };
+      }
 
-  const handleSearchCancel = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+      return { ok: true as const };
+    },
+    []
+  );
 
-    const ddd = cancelDdd.trim();
-    const number = cancelNumber.trim();
 
-    if (!/^\d{2}$/.test(ddd)) {
-      setCancelFeedback("Informe um DDD válido com 2 dígitos.");
-      setCancelBookings([]);
-      return;
-    }
-
-    if (!/^\d{8,9}$/.test(number)) {
-      setCancelFeedback("Informe um número válido com 8 ou 9 dígitos.");
-      setCancelBookings([]);
-      return;
-    }
-
-    if (!supabase) {
-      setCancelFeedback("Configuração do banco ausente para cancelar agendamento.");
-      return;
-    }
-
-    setIsSearchingCancel(true);
-    setCancelFeedback(null);
-    await loadBookingsByPhone(`${ddd}${number}`);
-    setIsSearchingCancel(false);
-  };
-
-  const handleCancelBooking = async (bookingId: string) => {
-    if (!supabase) return;
-
-    const phone = `${cancelDdd.trim()}${cancelNumber.trim()}`;
-    if (!/^\d{10,11}$/.test(phone)) {
-      setCancelFeedback("Telefone inválido para confirmar cancelamento.");
-      return;
-    }
-
-    setCancelingId(bookingId);
+  const cancelReservationById = useCallback(async (bookingId: string) => {
+    if (!supabase) return false;
 
     const { error } = await supabase
       .from("bookings")
-      .delete()
+      .update({ status: "cancelled", canceled_at: new Date().toISOString() })
       .eq("id", bookingId)
-      .or(`phone1.eq.${phone},phone2.eq.${phone}`);
-
-    setCancelingId(null);
+      .eq("status", "active");
 
     if (error) {
-      setCancelFeedback("Não foi possível cancelar o agendamento agora. Tente novamente.");
-      return;
+      setLookupMessage("Não foi possível cancelar a reserva agora. Tente novamente.");
+      return false;
     }
 
-    setCancelFeedback("Agendamento cancelado com sucesso. Agora você pode escolher outro horário.");
-    setErrorMessage(null);
-    setMessage(null);
-    await loadBookingsByPhone(phone);
-    void fetchBookings(selectedDate);
-  };
+    return true;
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -261,74 +250,195 @@ export default function Home() {
       return;
     }
 
-    const ddd1 = formData.ddd1.trim();
-    const number1 = formData.number1.trim();
-    const phone1 = ddd1 + number1;
+    const ddd = formData.ddd.trim();
+    const number = formData.number.trim();
+    const phone = ddd + number;
 
-    if (!ddd1 || !number1) {
-      setErrorMessage("Preencha DDD e número do telefone de contato.");
+    if (!ddd || !number) {
+      setErrorMessage("Preencha DDD e telefone de contato.");
       return;
     }
 
-    if (!/^\d{2}$/.test(ddd1)) {
+    if (!/^\d{2}$/.test(ddd)) {
       setErrorMessage("DDD deve ter 2 dígitos numéricos.");
       return;
     }
 
-    if (!/^\d{8,9}$/.test(number1)) {
-      setErrorMessage("Número deve ter 8 ou 9 dígitos numéricos.");
+    if (!/^\d{8,9}$/.test(number)) {
+      setErrorMessage("Telefone deve ter 8 ou 9 dígitos numéricos.");
       return;
     }
 
     setErrorMessage(null);
     setMessage(null);
-    setIsSubmitting(true);
 
-    const { data: existing, error: checkError } = await client
-      .from("bookings")
-      .select("phone1, phone2")
-      .or(`phone1.eq.${phone1},phone2.eq.${phone1}`);
-
-    if (checkError) {
-      setIsSubmitting(false);
-      setErrorMessage("Erro ao validar telefones. Tente novamente.");
+    if (rescheduleTarget) {
+      setErrorMessage("Para remarcar, escolha um novo horário e confirme no pop-out.");
       return;
     }
 
-    if (existing && existing.length > 0) {
-      setIsSubmitting(false);
-      setErrorMessage("Um dos telefones já possui agendamento. Cada casal pode reservar apenas um horário.");
-      return;
-    }
-
-    const { error } = await client.from("bookings").insert({
-      event_date: selectedDate,
-      slot_time: selectedSlot,
+    setPhoneConfirmDraft({
       person1: formData.person1.trim(),
       person2: formData.person2.trim(),
-      phone1,
-      phone2: "",
+      phone,
     });
+  };
 
+  const handleConfirmPhoneReservation = async () => {
+    if (!phoneConfirmDraft || !selectedSlot) return;
+
+    setIsSubmitting(true);
+    const result = await insertNewBooking(phoneConfirmDraft, selectedDate, selectedSlot);
     setIsSubmitting(false);
 
-    if (error) {
-      if (error.code === "23505") {
-        setErrorMessage("Esse horário acabou de ser reservado por outro casal. Escolha outro horário.");
+    if (!result.ok) {
+      if (result.reason === "phone-exists") {
+        setErrorMessage("Este número já possui um horário reservado. Cancele a reserva atual para escolher outro horário.");
+      } else if (result.reason === "phone-check") {
+        setErrorMessage("Erro ao validar telefone. Tente novamente.");
       } else {
-        setErrorMessage("Não foi possível concluir o agendamento. Tente novamente em instantes.");
+        setErrorMessage("Não foi possível concluir o agendamento. Se o telefone já estiver reservado, cancele antes de remarcar.");
       }
       return;
     }
 
-    setMessage("Agendamento realizado com sucesso. Que alegria receber vocês!");
+    setMessage("Agendamento realizado com sucesso.");
     setSelectedSlot(null);
     setFormData(defaultFormState);
+    setPhoneConfirmDraft(null);
     void fetchBookings(selectedDate);
   };
 
+  const handleLookupReservation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase) return;
+
+    const ddd = lookupDdd.trim();
+    const number = lookupNumber.trim();
+    const phone = ddd && number ? `${ddd}${number}` : "";
+
+    if (!phone) {
+      setLookupMessage("Informe DDD e telefone para consultar.");
+      setLookupResult(null);
+      return;
+    }
+
+    if (!/^\d{2}$/.test(ddd) || !/^\d{8,9}$/.test(number)) {
+      setLookupMessage("Telefone inválido. Verifique DDD e número.");
+      setLookupResult(null);
+      return;
+    }
+
+    setIsLookingUp(true);
+    setLookupMessage(null);
+    setLookupResult(null);
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("id, event_date, slot_time, person1, person2, phone1")
+      .eq("status", "active")
+      .eq("phone1", phone)
+      .limit(1);
+
+    setIsLookingUp(false);
+
+    if (error) {
+      setLookupMessage("Erro ao consultar reserva. Tente novamente.");
+      return;
+    }
+
+    const result = (data as BookingLookupRow[])[0];
+    if (!result) {
+      setLookupMessage("Nenhuma reserva ativa encontrada com este telefone.");
+      return;
+    }
+
+    setLookupResult(result);
+  };
+
+  const handleCancelReservation = async () => {
+    if (!lookupResult) return;
+
+    setCancelingId(lookupResult.id);
+    const ok = await cancelReservationById(lookupResult.id);
+    setCancelingId(null);
+
+    if (!ok) return;
+
+    setLookupMessage("Reserva cancelada com sucesso.");
+    setLookupResult(null);
+    setErrorMessage(null);
+    setMessage("Horário liberado. Agora você pode reservar outro horário.");
+    void fetchBookings(selectedDate);
+  };
+
+  const handleRescheduleReservation = async () => {
+    if (!lookupResult) return;
+
+    const ddd = lookupResult.phone1.slice(0, 2);
+    const number = lookupResult.phone1.slice(2);
+
+    setRescheduleTarget(lookupResult);
+    setSelectedDate(lookupResult.event_date);
+    setIsLoadingSlots(true);
+    setSelectedSlot(null);
+    setFormData({
+      person1: lookupResult.person1,
+      person2: lookupResult.person2,
+      ddd,
+      number,
+    });
+
+    setLookupOpen(false);
+    setLookupResult(null);
+    setLookupMessage("Agora escolha um novo horário e confirme a remarcação.");
+    setMessage("Modo remarcar ativo. Após escolher o novo horário, confirme em SIM ou NÃO.");
+    void fetchBookings(selectedDate);
+  };
+
+  const handleConfirmReschedule = async () => {
+    if (!supabase || !rescheduleTarget || !rescheduleConfirmDraft) return;
+
+    setIsFinalizing(true);
+
+    const { error } = await supabase
+      .from("bookings")
+      .update({
+        event_date: rescheduleConfirmDraft.newDate,
+        slot_time: rescheduleConfirmDraft.newSlot,
+      })
+      .eq("id", rescheduleTarget.id)
+      .eq("status", "active");
+
+    setIsFinalizing(false);
+
+    if (error) {
+      setErrorMessage("Não foi possível remarcar agora. Tente outro horário ou cancele a reserva.");
+      return;
+    }
+
+    setMessage("Reserva remarcada com sucesso.");
+    setRescheduleConfirmDraft(null);
+    setRescheduleTarget(null);
+    setSelectedSlot(null);
+    setFormData(defaultFormState);
+    void fetchBookings(rescheduleConfirmDraft.newDate);
+  };
+
+  const handleRejectReschedule = () => {
+    setRescheduleConfirmDraft(null);
+    setMessage("Escolha outro horário para remarcar ou cancele a reserva atual.");
+  };
+
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+    <div className="relative min-h-screen">
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute inset-0 bg-[url('/equipe-liturgia-bg.jpg')] bg-cover bg-center bg-no-repeat opacity-20" />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/86 via-white/84 to-[#fffdf8]/90" />
+        <div className="absolute inset-0 backdrop-blur-[1.5px]" />
+      </div>
+
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <header className="panel-glow fade-up rounded-3xl border border-white/70 px-6 py-8 text-center sm:px-10">
         <p className="mb-3 inline-flex rounded-full bg-[var(--brand-soft)] px-4 py-1 text-xs font-semibold tracking-[0.2em] text-[var(--brand)] uppercase">
           Agenda Oficial
@@ -337,7 +447,7 @@ export default function Home() {
           3° CONVERSA - ENCONTRO DE CASAIS
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-sm text-slate-600 sm:text-base">
-          Escolha a data e reserve um único horário para o casal.
+          Reserva simples sem login. Agende e consulte pelo telefone.
         </p>
       </header>
 
@@ -401,6 +511,12 @@ export default function Home() {
                         setSelectedSlot(slot.value);
                         setMessage(null);
                         setErrorMessage(null);
+                        if (rescheduleTarget) {
+                          setRescheduleConfirmDraft({
+                            newDate: selectedDate,
+                            newSlot: slot.value,
+                          });
+                        }
                       }}
                       className={`h-11 rounded-xl border text-sm font-semibold transition-all duration-200 ${
                         slot.isLunch
@@ -431,7 +547,7 @@ export default function Home() {
 
           {!canBook && (
             <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Configure NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para ativar reservas em tempo real.
+              Configure NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY para habilitar reservas.
             </div>
           )}
 
@@ -467,11 +583,11 @@ export default function Home() {
                 pattern="\d{2}"
                 maxLength={2}
                 placeholder="DDD"
-                value={formData.ddd1}
+                value={formData.ddd}
                 disabled={!selectedSlot || !canBook}
                 onChange={(event) => {
                   const val = event.target.value.replace(/\D/g, "").slice(0, 2);
-                  setFormData((prev) => ({ ...prev, ddd1: val }));
+                  setFormData((prev) => ({ ...prev, ddd: val }));
                 }}
                 className="w-16 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
                 required
@@ -482,11 +598,11 @@ export default function Home() {
                 pattern="\d{8,9}"
                 maxLength={9}
                 placeholder="Telefone para contato"
-                value={formData.number1}
+                value={formData.number}
                 disabled={!selectedSlot || !canBook}
                 onChange={(event) => {
                   const val = event.target.value.replace(/\D/g, "").slice(0, 9);
-                  setFormData((prev) => ({ ...prev, number1: val }));
+                  setFormData((prev) => ({ ...prev, number: val }));
                 }}
                 className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
                 required
@@ -495,7 +611,7 @@ export default function Home() {
 
             <button
               type="submit"
-              disabled={!selectedSlot || isSubmitting || !canBook}
+              disabled={!selectedSlot || isSubmitting || !canBook || isFinalizing}
               className="flex w-full items-center justify-center rounded-xl bg-[var(--brand)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSubmitting ? (
@@ -509,82 +625,18 @@ export default function Home() {
             </button>
           </form>
 
-          <div className="mt-6 border-t border-slate-200 pt-5">
-            <h3 className="text-lg font-semibold text-slate-900">Cancelar agendamento</h3>
-            <p className="mt-1 text-sm text-slate-600">
-              Informe o telefone usado no agendamento para localizar e cancelar.
-            </p>
-
-            <form onSubmit={handleSearchCancel} className="mt-3 space-y-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{2}"
-                  maxLength={2}
-                  placeholder="DDD"
-                  value={cancelDdd}
-                  disabled={!canBook || isSearchingCancel}
-                  onChange={(event) => setCancelDdd(event.target.value.replace(/\D/g, "").slice(0, 2))}
-                  className="w-16 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
-                  required
-                />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{8,9}"
-                  maxLength={9}
-                  placeholder="Telefone para cancelar"
-                  value={cancelNumber}
-                  disabled={!canBook || isSearchingCancel}
-                  onChange={(event) => setCancelNumber(event.target.value.replace(/\D/g, "").slice(0, 9))}
-                  className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={!canBook || isSearchingCancel}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isSearchingCancel ? "Buscando..." : "Buscar meu agendamento"}
-              </button>
-            </form>
-
-            {cancelFeedback && (
-              <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                {cancelFeedback}
-              </p>
-            )}
-
-            {cancelBookings.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {cancelBookings.map((booking) => (
-                  <div
-                    key={booking.id}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {booking.person1} e {booking.person2}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {formatDateToBrShort(booking.event_date)} às {booking.slot_time.slice(0, 5)}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCancelBooking(booking.id)}
-                      disabled={cancelingId === booking.id}
-                      className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {cancelingId === booking.id ? "Cancelando..." : "Cancelar"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="mt-6 border-t border-slate-200 pt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setLookupOpen(true);
+                setLookupResult(null);
+                setLookupMessage(null);
+              }}
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Consultar reserva
+            </button>
           </div>
 
           {errorMessage && (
@@ -600,6 +652,167 @@ export default function Home() {
           )}
         </aside>
       </section>
+
+      {phoneConfirmDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-amber-900">Confirmar telefone</h3>
+            <p className="mt-2 text-sm text-amber-900">
+              Você confirma que o seu número é <span className="font-semibold">({phoneConfirmDraft.phone.slice(0, 2)}) {phoneConfirmDraft.phone.slice(2)}</span>?
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => void handleConfirmPhoneReservation()}
+                disabled={isSubmitting}
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+              >
+                {isSubmitting ? "Confirmando..." : "Confirmar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPhoneConfirmDraft(null);
+                  setMessage("Revise o telefone e confirme novamente.");
+                }}
+                disabled={isSubmitting}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rescheduleConfirmDraft && rescheduleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-indigo-300 bg-indigo-50 p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-indigo-900">Confirmar remarcação</h3>
+            <p className="mt-2 text-sm text-indigo-900">
+              Deseja remarcar para <span className="font-semibold">{formatDateToBrShort(rescheduleConfirmDraft.newDate)} às {rescheduleConfirmDraft.newSlot.slice(0, 5)}</span>?
+            </p>
+            <p className="mt-1 text-xs text-indigo-900">
+              Reserva atual: {formatDateToBrShort(rescheduleTarget.event_date)} às {rescheduleTarget.slot_time.slice(0, 5)}
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => void handleConfirmReschedule()}
+                disabled={isFinalizing}
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+              >
+                {isFinalizing ? "Confirmando..." : "SIM"}
+              </button>
+              <button
+                type="button"
+                onClick={handleRejectReschedule}
+                disabled={isFinalizing}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                NÃO
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lookupOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-300 bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-lg font-semibold text-slate-900">Consultar reserva</h3>
+              <button
+                type="button"
+                onClick={() => setLookupOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-600">Informe o telefone para localizar sua reserva ativa.</p>
+
+            <form onSubmit={handleLookupReservation} className="mt-3 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{2}"
+                  maxLength={2}
+                  placeholder="DDD"
+                  value={lookupDdd}
+                  disabled={!canBook || isLookingUp}
+                  onChange={(event) =>
+                    setLookupDdd(event.target.value.replace(/\D/g, "").slice(0, 2))
+                  }
+                  className="w-16 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
+                  required
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{8,9}"
+                  maxLength={9}
+                  placeholder="Telefone"
+                  value={lookupNumber}
+                  disabled={!canBook || isLookingUp}
+                  onChange={(event) =>
+                    setLookupNumber(event.target.value.replace(/\D/g, "").slice(0, 9))
+                  }
+                  className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={!canBook || isLookingUp}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLookingUp ? "Consultando..." : "Buscar reserva"}
+              </button>
+            </form>
+
+            {lookupResult && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">
+                  {lookupResult.person1} e {lookupResult.person2}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {formatDateToBrShort(lookupResult.event_date)} às {lookupResult.slot_time.slice(0, 5)}
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleCancelReservation()}
+                    disabled={cancelingId === lookupResult.id}
+                    className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancelingId === lookupResult.id ? "Cancelando..." : "Cancelar"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRescheduleReservation()}
+                    disabled={cancelingId === lookupResult.id}
+                    className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancelingId === lookupResult.id ? "Remarcando..." : "Remarcar"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {lookupMessage && (
+              <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                {lookupMessage}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      </div>
     </div>
   );
 }
