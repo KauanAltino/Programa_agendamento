@@ -497,7 +497,7 @@ export default function Home() {
           <div className="mt-6">
             <h3 className="text-lg text-slate-900">Horários disponíveis</h3>
             <p className="mt-1 text-sm text-slate-600 text-center">
-              Verde: disponível • Vermelho: indisponível • Cinza: almoço
+              • Verde: disponível • Vermelho: indisponível • 
             </p>
 
             {isLoadingSlots ? (
@@ -565,7 +565,7 @@ export default function Home() {
           <form onSubmit={handleSubmit} className="mt-4 space-y-3">
             <input
               type="text"
-              placeholder="Nome da Pessoa 1"
+              placeholder="Nome do Marido"
               value={formData.person1}
               disabled={!selectedSlot || !canBook}
               onChange={(event) =>
@@ -577,7 +577,7 @@ export default function Home() {
 
             <input
               type="text"
-              placeholder="Nome da Pessoa 2"
+              placeholder="Nome da Esposa"
               value={formData.person2}
               disabled={!selectedSlot || !canBook}
               onChange={(event) =>
