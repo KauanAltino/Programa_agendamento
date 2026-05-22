@@ -93,6 +93,11 @@ const formatDateToBrShort = (yyyyMmDd: string) => {
 };
 
 export default function Home() {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  const logoSrc = `${basePath}/equipe-liturgia-bg-logo.jpg`;
+  const mobileBgSrc = `${basePath}/equipe-liturgia-bg-MOBILE.jpg`;
+  const desktopBgSrc = `${basePath}/equipe-liturgia-bg.jpg`;
+
   const [selectedDate, setSelectedDate] = useState(DATE_OPTIONS[0].value);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [bookings, setBookings] = useState<Set<string>>(new Set());
@@ -434,8 +439,14 @@ export default function Home() {
   return (
     <div className="relative min-h-screen">
       <div className="pointer-events-none fixed inset-0 z-0">
-        <div className="absolute inset-0 bg-[url('/equipe-liturgia-bg-MOBILE.jpg')] bg-cover bg-center bg-no-repeat md:hidden" />
-        <div className="absolute inset-0 hidden bg-[url('/equipe-liturgia-bg.jpg')] bg-cover bg-center bg-no-repeat md:block" />
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat md:hidden"
+          style={{ backgroundImage: `url('${mobileBgSrc}')` }}
+        />
+        <div
+          className="absolute inset-0 hidden bg-cover bg-center bg-no-repeat md:block"
+          style={{ backgroundImage: `url('${desktopBgSrc}')` }}
+        />
         <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-white/10 to-[#fffdf8]/10"  />
         <div className="absolute inset-0 backdrop-blur-[2px]" />
       </div>
@@ -447,10 +458,11 @@ export default function Home() {
         </p>
         <div className="mx-auto flex max-w-5xl items-center justify-center gap-3 sm:gap-4">
           <Image
-            src="/equipe-liturgia-bg-logo.jpg"
+            src={logoSrc}
             alt="Logo do encontro"
             width={64}
             height={64}
+            unoptimized
             className="h-12 w-12 rounded-full border border-white/70 object-cover shadow-sm sm:h-16 sm:w-16"
           />
           <h1 className="text-3xl leading-tight text-slate-900 sm:text-4xl lg:text-5xl">
