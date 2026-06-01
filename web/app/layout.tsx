@@ -13,8 +13,8 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "3° CONVERSA - ENCONTRO DE CASAIS",
-  description: "Agendamento de horários para o 3° Conversa - Encontro de Casais",
+  title: "16° ECC - CONVERSA Á TRÊS - ENCONTRO DE CASAIS",
+  description: "Agendamento de horários para o 16° ECC - Conversa Á Três - Encontro de Casais",
 };
 
 export default function RootLayout({
