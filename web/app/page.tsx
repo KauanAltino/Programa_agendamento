@@ -44,6 +44,8 @@ const DATE_OPTIONS: DateOption[] = [
   { label: "Domingo • 23/08/2026", value: "2026-08-23" },
 ];
 
+const CLASS_OPTIONS = ["Cozinha", "Ordem", "Liturgia", "Secretaria", "Compras", "Círculo", "Dirigente", "Palestra"];
+
 const START_MINUTES = 7 * 60;
 const END_MINUTES_SATURDAY = 20 * 60;
 const END_MINUTES_SUNDAY = 12 * 60;
@@ -52,6 +54,7 @@ const LUNCH_START = 12 * 60;
 const LUNCH_END = 13 * 60;
 
 const defaultFormState = {
+  className: "",
   person1: "",
   person2: "",
   ddd: "",
@@ -251,6 +254,11 @@ export default function Home() {
       return;
     }
 
+    if (!formData.className) {
+      setErrorMessage("Selecione a sua equipe.");
+      return;
+    }
+
     if (!formData.person1.trim() || !formData.person2.trim()) {
       setErrorMessage("Os dois nomes do casal são obrigatórios.");
       return;
@@ -389,6 +397,7 @@ export default function Home() {
     setIsLoadingSlots(true);
     setSelectedSlot(null);
     setFormData({
+      className: "",
       person1: lookupResult.person1,
       person2: lookupResult.person2,
       ddd,
@@ -466,11 +475,11 @@ export default function Home() {
             className="h-12 w-12 rounded-full border border-white/70 object-cover shadow-sm sm:h-16 sm:w-16"
           />
           <h1 className="text-3xl leading-tight text-slate-900 sm:text-4xl lg:text-5xl">
-            3° CONVERSA - ENCONTRO DE CASAIS
+            16° ECC - CONVERSA Á TRÊS
           </h1>
         </div>
         <p className="mx-auto mt-4 text-sm text-slate-600 sm:text-base">
-          Reserva de horários para a 3° Conversa - Encontro de Casais.
+          Reserva de horários.
         </p>
       </header>
 
@@ -575,6 +584,28 @@ export default function Home() {
           )}
 
           <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+            <div>
+              <label htmlFor="className" className="mb-1 block text-xs font-semibold tracking-wide text-slate-700 uppercase">
+              </label>
+              <select
+                id="className"
+                value={formData.className}
+                disabled={!selectedSlot || !canBook}
+                onChange={(event) =>
+                  setFormData((prev) => ({ ...prev, className: event.target.value }))
+                }
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--brand)] disabled:cursor-not-allowed disabled:bg-slate-100"
+                required
+              >
+                <option value="">Selecione a sua equipe</option>
+                {CLASS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <input
               type="text"
               placeholder="Nome do Marido"
