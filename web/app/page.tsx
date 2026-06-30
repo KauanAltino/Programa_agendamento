@@ -44,14 +44,15 @@ const DATE_OPTIONS: DateOption[] = [
   { label: "Domingo • 23/08/2026", value: "2026-08-23" },
 ];
 
-const CLASS_OPTIONS = ["Cozinha", "Ordem", "Liturgia", "Secretaria", "Compras", "Círculo", "Dirigente", "Palestra"];
+const CLASS_OPTIONS = ["Cozinha", "Ordem", "Liturgia", "Compras", "Círculo", "Visitação", "Café", "Acolhida", "Sala"];
 
-const START_MINUTES = 7 * 60;
-const END_MINUTES_SATURDAY = 20 * 60;
-const END_MINUTES_SUNDAY = 12 * 60;
-const STEP_MINUTES = 30;
+const START_MINUTES = 7 * 60 + 15;
+const END_MINUTES_SATURDAY = 20 * 60 + 30;
+const END_MINUTES_SUNDAY = 13 * 60;
+const STEP_MINUTES = 15;
 const LUNCH_START = 12 * 60;
 const LUNCH_END = 13 * 60;
+const HIDDEN_SATURDAY_TIMES = new Set(["12:15", "12:30", "12:45"]);
 
 const defaultFormState = {
   className: "",
@@ -78,6 +79,10 @@ const getSlotsForDate = (date: string): Slot[] => {
     (_, idx) => {
       const minutePoint = START_MINUTES + idx * STEP_MINUTES;
       const label = toTimeLabel(minutePoint);
+      if (!isSunday && HIDDEN_SATURDAY_TIMES.has(label)) {
+        return null;
+      }
+
       const isLunch =
         !isSunday && minutePoint >= LUNCH_START && minutePoint < LUNCH_END;
 
@@ -87,7 +92,7 @@ const getSlotsForDate = (date: string): Slot[] => {
         isLunch,
       };
     }
-  );
+  ).filter((slot): slot is Slot => slot !== null);
 };
 
 const formatDateToBrShort = (yyyyMmDd: string) => {
