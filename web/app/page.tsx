@@ -130,7 +130,7 @@ export default function Home() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
-  const [isLiteMode, setIsLiteMode] = useState(false);
+  const [isLiteMode, setIsLiteMode] = useState(true);
   const [slotErrorMessage, setSlotErrorMessage] = useState<string | null>(null);
   const [hasLoadedSlotsOnce, setHasLoadedSlotsOnce] = useState(false);
 
