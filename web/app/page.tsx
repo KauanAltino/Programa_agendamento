@@ -17,10 +17,24 @@ type BookingLookupRow = {
   phone1: string;
 };
 
+type BookingExportRow = {
+  event_date: string;
+  slot_time: string;
+  person1: string;
+  person2: string;
+  phone1: string;
+};
+
 type ReservationDraft = {
   person1: string;
   person2: string;
   phone: string;
+};
+
+type DbLikeError = {
+  code?: string;
+  message?: string;
+  details?: string;
 };
 
 type RescheduleDraft = {
@@ -100,6 +114,17 @@ const formatDateToBrShort = (yyyyMmDd: string) => {
   return `${day}/${month}/${year.slice(2)}`;
 };
 
+const formatPhoneToBr = (phone: string) => {
+  const ddd = phone.slice(0, 2);
+  const number = phone.slice(2);
+
+  if (number.length === 9) {
+    return `(${ddd}) ${number.slice(0, 5)}-${number.slice(5)}`;
+  }
+
+  return `(${ddd}) ${number.slice(0, 4)}-${number.slice(4)}`;
+};
+
 export default function Home() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
   const logoSrc = `${basePath}/equipe-liturgia-bg-logo.jpg`;
@@ -124,6 +149,9 @@ export default function Home() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [slotErrorMessage, setSlotErrorMessage] = useState<string | null>(null);
+  const [hasLoadedSlotsOnce, setHasLoadedSlotsOnce] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -134,25 +162,40 @@ export default function Home() {
   const fetchBookings = useCallback(async (date: string) => {
     if (!supabase) return;
 
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("slot_time")
-      .eq("event_date", date)
-      .eq("status", "active");
+    const maxAttempts = 3;
 
-    if (error) {
-      setErrorMessage("Erro ao buscar horários. Atualize a página e tente novamente.");
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("slot_time")
+        .eq("event_date", date)
+        .eq("status", "active");
+
+      if (!error) {
+        const reserved = new Set(
+          (data as BookingSlotRow[]).map((booking) => booking.slot_time.slice(0, 8))
+        );
+
+        setBookings(reserved);
+        setHasLoadedSlotsOnce(true);
+        setSlotErrorMessage(null);
+        setIsLoadingSlots(false);
+        return;
+      }
+
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+        continue;
+      }
+
+      if (hasLoadedSlotsOnce) {
+        setSlotErrorMessage("Erro ao buscar horários. Atualize a página e tente novamente.");
+      } else {
+        setSlotErrorMessage(null);
+      }
       setIsLoadingSlots(false);
-      return;
     }
-
-    const reserved = new Set(
-      (data as BookingSlotRow[]).map((booking) => booking.slot_time.slice(0, 8))
-    );
-
-    setBookings(reserved);
-    setIsLoadingSlots(false);
-  }, []);
+  }, [hasLoadedSlotsOnce]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -205,26 +248,53 @@ export default function Home() {
         .eq("status", "active")
         .limit(1);
 
-      if (checkPhoneError) {
-        return { ok: false as const, reason: "phone-check" };
-      }
-
-      if (existingByPhone && existingByPhone.length > 0) {
+      // If read-check fails (policy/network/schema drift), keep flow and validate via insert constraints.
+      if (!checkPhoneError && existingByPhone && existingByPhone.length > 0) {
         return { ok: false as const, reason: "phone-exists" };
       }
 
-      const { error } = await supabase.from("bookings").insert({
+      const basePayload = {
         event_date: date,
         slot_time: slot,
         person1: draft.person1,
         person2: draft.person2,
         phone1: draft.phone,
         phone2: "",
+      };
+
+      const { error } = await supabase.from("bookings").insert({
+        ...basePayload,
         status: "active",
       });
 
       if (error) {
-        return { ok: false as const, reason: "insert" };
+        if (error.code === "42703" && (error.message ?? "").toLowerCase().includes("status")) {
+          const { error: fallbackError } = await supabase
+            .from("bookings")
+            .insert(basePayload);
+
+          if (!fallbackError) {
+            return { ok: true as const };
+          }
+
+          return { ok: false as const, reason: "insert", dbError: fallbackError as DbLikeError };
+        }
+
+        if (error.code === "23505") {
+          const conflictHint = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+
+          if (conflictHint.includes("phone")) {
+            return { ok: false as const, reason: "phone-exists" };
+          }
+
+          return { ok: false as const, reason: "slot-exists" };
+        }
+
+        if (error.code === "42501") {
+          return { ok: false as const, reason: "permission-denied" };
+        }
+
+        return { ok: false as const, reason: "insert", dbError: error as DbLikeError };
       }
 
       return { ok: true as const };
@@ -313,10 +383,21 @@ export default function Home() {
     if (!result.ok) {
       if (result.reason === "phone-exists") {
         setErrorMessage("Este número já possui um horário reservado. Cancele a reserva atual para escolher outro horário.");
-      } else if (result.reason === "phone-check") {
-        setErrorMessage("Erro ao validar telefone. Tente novamente.");
+      } else if (result.reason === "slot-exists") {
+        setErrorMessage("Este horário acabou de ser reservado por outra pessoa. Escolha outro horário.");
+      } else if (result.reason === "permission-denied") {
+        setErrorMessage("Sem permissão para gravar no banco. Revise as policies no Supabase (schema.sql).");
       } else {
-        setErrorMessage("Não foi possível concluir o agendamento. Se o telefone já estiver reservado, cancele antes de remarcar.");
+        const dbCode = "dbError" in result ? result.dbError?.code : undefined;
+        const dbMessage = "dbError" in result ? result.dbError?.message : undefined;
+
+        if (dbCode === "42P01") {
+          setErrorMessage("Tabela bookings não encontrada no banco. Execute o schema.sql no Supabase.");
+        } else if (dbCode === "42703") {
+          setErrorMessage("Estrutura da tabela desatualizada. Execute novamente o schema.sql no Supabase.");
+        } else {
+          setErrorMessage(`Não foi possível concluir o agendamento agora. ${dbMessage ? `Detalhe: ${dbMessage}` : "Tente novamente em instantes."}`);
+        }
       }
       return;
     }
@@ -450,17 +531,104 @@ export default function Home() {
     setMessage("Escolha outro horário para remarcar ou cancele a reserva atual.");
   };
 
+  const handleDownloadPdf = useCallback(async () => {
+    if (!supabase) {
+      setErrorMessage("Configuração do banco ausente. Configure o Supabase para exportar o PDF.");
+      return;
+    }
+
+    setIsExportingPdf(true);
+    setErrorMessage(null);
+    setMessage(null);
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("event_date, slot_time, person1, person2, phone1")
+      .eq("status", "active")
+      .order("event_date", { ascending: true })
+      .order("slot_time", { ascending: true });
+
+    if (error) {
+      setIsExportingPdf(false);
+      setErrorMessage("Erro ao gerar PDF. Tente novamente em instantes.");
+      return;
+    }
+
+    const exportRows = (data as BookingExportRow[]) ?? [];
+
+    if (exportRows.length === 0) {
+      setIsExportingPdf(false);
+      setMessage("Não há horários marcados para exportar no momento.");
+      return;
+    }
+
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginX = 40;
+    const marginTop = 48;
+    const marginBottom = 40;
+    const lineHeight = 18;
+    let y = marginTop;
+
+    doc.setFontSize(16);
+    doc.text("Relatório de horários marcados", marginX, y);
+    y += 22;
+
+    doc.setFontSize(11);
+    doc.text(
+      `Gerado em: ${new Date().toLocaleString("pt-BR")} | Total de reservas ativas: ${exportRows.length}`,
+      marginX,
+      y
+    );
+    y += 24;
+
+    doc.setFontSize(12);
+    doc.text("Data/Hora | Casal | Telefone", marginX, y);
+    y += 12;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 14;
+
+    for (const row of exportRows) {
+      const line = `${formatDateToBrShort(row.event_date)} ${row.slot_time.slice(0, 5)} | ${row.person1} e ${row.person2} | ${formatPhoneToBr(row.phone1)}`;
+
+      if (y > pageHeight - marginBottom) {
+        doc.addPage();
+        y = marginTop;
+        doc.setFontSize(12);
+        doc.text("Data/Hora | Casal | Telefone", marginX, y);
+        y += 12;
+        doc.line(marginX, y, pageWidth - marginX, y);
+        y += 14;
+      }
+
+      const wrapped = doc.splitTextToSize(line, pageWidth - marginX * 2);
+      doc.setFontSize(11);
+      doc.text(wrapped, marginX, y);
+      y += wrapped.length * lineHeight;
+    }
+
+    const fileDate = new Date().toISOString().slice(0, 10);
+    doc.save(`horarios-marcados-${fileDate}.pdf`);
+
+    setIsExportingPdf(false);
+    setMessage("PDF gerado com sucesso.");
+  }, []);
+
   return (
     <div className="relative min-h-screen">
       <div className="pointer-events-none fixed inset-0 z-0">
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat md:hidden"
-          style={{ backgroundImage: `url('${mobileBgSrc}')` }}
-        />
-        <div
-          className="absolute inset-0 hidden bg-cover bg-center bg-no-repeat md:block"
-          style={{ backgroundImage: `url('${desktopBgSrc}')` }}
-        />
+        <picture className="absolute inset-0 block h-full w-full">
+          <source media="(min-width: 768px)" srcSet={desktopBgSrc} />
+          <img
+            src={mobileBgSrc}
+            alt=""
+            className="h-full w-full object-cover object-center"
+            loading="eager"
+            decoding="async"
+          />
+        </picture>
         <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-white/10 to-[#fffdf8]/10"  />
         <div className="absolute inset-0 backdrop-blur-[2px]" />
       </div>
@@ -508,6 +676,7 @@ export default function Home() {
                   setSelectedSlot(null);
                   setMessage(null);
                   setErrorMessage(null);
+                  setSlotErrorMessage(null);
                 }}
                 className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-300 ${
                   selectedDate === option.value
@@ -570,6 +739,12 @@ export default function Home() {
                   );
                 })}
               </div>
+            )}
+
+            {slotErrorMessage && (
+              <p className="mt-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {slotErrorMessage}
+              </p>
             )}
           </div>
         </article>
@@ -685,17 +860,27 @@ export default function Home() {
           </form>
 
           <div className="mt-6 border-t border-slate-400 pt-4">
-            <button
-              type="button"
-              onClick={() => {
-                setLookupOpen(true);
-                setLookupResult(null);
-                setLookupMessage(null);
-              }}
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Consultar reserva
-            </button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setLookupOpen(true);
+                  setLookupResult(null);
+                  setLookupMessage(null);
+                }}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Consultar reserva
+              </button>
+              <button
+                type="button"
+                disabled={!canBook || isExportingPdf}
+                onClick={() => void handleDownloadPdf()}
+                className="w-full rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExportingPdf ? "Gerando PDF..." : "Baixar horários em PDF"}
+              </button>
+            </div>
           </div>
 
           {errorMessage && (
