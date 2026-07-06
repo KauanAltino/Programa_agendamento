@@ -2,7 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { recordAuditLog } from "@/lib/audit-log";
+import { formatDateToBrShort } from "@/lib/booking-pdf";
 
 type BookingSlotRow = {
   slot_time: string;
@@ -15,17 +18,11 @@ type BookingLookupRow = {
   person1: string;
   person2: string;
   phone1: string;
-};
-
-type BookingExportRow = {
-  event_date: string;
-  slot_time: string;
-  person1: string;
-  person2: string;
-  phone1: string;
+  class_name?: string | null;
 };
 
 type ReservationDraft = {
+  className: string;
   person1: string;
   person2: string;
   phone: string;
@@ -109,22 +106,6 @@ const getSlotsForDate = (date: string): Slot[] => {
   ).filter((slot): slot is Slot => slot !== null);
 };
 
-const formatDateToBrShort = (yyyyMmDd: string) => {
-  const [year, month, day] = yyyyMmDd.split("-");
-  return `${day}/${month}/${year.slice(2)}`;
-};
-
-const formatPhoneToBr = (phone: string) => {
-  const ddd = phone.slice(0, 2);
-  const number = phone.slice(2);
-
-  if (number.length === 9) {
-    return `(${ddd}) ${number.slice(0, 5)}-${number.slice(5)}`;
-  }
-
-  return `(${ddd}) ${number.slice(0, 4)}-${number.slice(4)}`;
-};
-
 export default function Home() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
   const logoSrc = `${basePath}/equipe-liturgia-bg-logo.jpg`;
@@ -149,7 +130,7 @@ export default function Home() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [isFinalizing, setIsFinalizing] = useState(false);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isLiteMode, setIsLiteMode] = useState(false);
   const [slotErrorMessage, setSlotErrorMessage] = useState<string | null>(null);
   const [hasLoadedSlotsOnce, setHasLoadedSlotsOnce] = useState(false);
 
@@ -256,28 +237,42 @@ export default function Home() {
       const basePayload = {
         event_date: date,
         slot_time: slot,
+        class_name: draft.className,
         person1: draft.person1,
         person2: draft.person2,
         phone1: draft.phone,
         phone2: "",
       };
 
-      const { error } = await supabase.from("bookings").insert({
-        ...basePayload,
-        status: "active",
-      });
+      const insertPayloads: Array<Record<string, string>> = [
+        { ...basePayload, status: "active" },
+        { ...basePayload },
+        {
+          event_date: date,
+          slot_time: slot,
+          person1: draft.person1,
+          person2: draft.person2,
+          phone1: draft.phone,
+          phone2: "",
+          status: "active",
+        },
+        {
+          event_date: date,
+          slot_time: slot,
+          person1: draft.person1,
+          person2: draft.person2,
+          phone1: draft.phone,
+          phone2: "",
+        },
+      ];
 
-      if (error) {
-        if (error.code === "42703" && (error.message ?? "").toLowerCase().includes("status")) {
-          const { error: fallbackError } = await supabase
-            .from("bookings")
-            .insert(basePayload);
+      let lastError: DbLikeError | null = null;
 
-          if (!fallbackError) {
-            return { ok: true as const };
-          }
+      for (const payload of insertPayloads) {
+        const { error } = await supabase.from("bookings").insert(payload as never);
 
-          return { ok: false as const, reason: "insert", dbError: fallbackError as DbLikeError };
+        if (!error) {
+          return { ok: true as const };
         }
 
         if (error.code === "23505") {
@@ -294,10 +289,14 @@ export default function Home() {
           return { ok: false as const, reason: "permission-denied" };
         }
 
-        return { ok: false as const, reason: "insert", dbError: error as DbLikeError };
+        lastError = error as DbLikeError;
+
+        if (error.code !== "42703") {
+          break;
+        }
       }
 
-      return { ok: true as const };
+      return { ok: false as const, reason: "insert", dbError: lastError ?? undefined };
     },
     []
   );
@@ -367,6 +366,7 @@ export default function Home() {
     }
 
     setPhoneConfirmDraft({
+      className: formData.className,
       person1: formData.person1.trim(),
       person2: formData.person2.trim(),
       phone,
@@ -403,6 +403,17 @@ export default function Home() {
     }
 
     setMessage("Agendamento realizado com sucesso.");
+    void recordAuditLog({
+      action: "created",
+      actorRole: "public",
+      actorLabel: "Site público",
+      bookingPerson1: phoneConfirmDraft.person1,
+      bookingPerson2: phoneConfirmDraft.person2,
+      className: phoneConfirmDraft.className,
+      phone1: phoneConfirmDraft.phone,
+      toEventDate: selectedDate,
+      toSlotTime: selectedSlot,
+    });
     setSelectedSlot(null);
     setFormData(defaultFormState);
     setPhoneConfirmDraft(null);
@@ -435,7 +446,7 @@ export default function Home() {
 
     const { data, error } = await supabase
       .from("bookings")
-      .select("id, event_date, slot_time, person1, person2, phone1")
+      .select("id, event_date, slot_time, person1, person2, phone1, class_name")
       .eq("status", "active")
       .eq("phone1", phone)
       .limit(1);
@@ -464,6 +475,19 @@ export default function Home() {
     setCancelingId(null);
 
     if (!ok) return;
+
+    void recordAuditLog({
+      action: "cancelled",
+      actorRole: "public",
+      actorLabel: "Site público",
+      bookingId: lookupResult.id,
+      bookingPerson1: lookupResult.person1,
+      bookingPerson2: lookupResult.person2,
+      className: lookupResult.class_name,
+      phone1: lookupResult.phone1,
+      fromEventDate: lookupResult.event_date,
+      fromSlotTime: lookupResult.slot_time,
+    });
 
     setLookupMessage("Reserva cancelada com sucesso.");
     setLookupResult(null);
@@ -519,6 +543,20 @@ export default function Home() {
     }
 
     setMessage("Reserva remarcada com sucesso.");
+    void recordAuditLog({
+      action: "rescheduled",
+      actorRole: "public",
+      actorLabel: "Site público",
+      bookingId: rescheduleTarget.id,
+      bookingPerson1: rescheduleTarget.person1,
+      bookingPerson2: rescheduleTarget.person2,
+      className: rescheduleTarget.class_name,
+      phone1: rescheduleTarget.phone1,
+      fromEventDate: rescheduleTarget.event_date,
+      fromSlotTime: rescheduleTarget.slot_time,
+      toEventDate: rescheduleConfirmDraft.newDate,
+      toSlotTime: rescheduleConfirmDraft.newSlot,
+    });
     setRescheduleConfirmDraft(null);
     setRescheduleTarget(null);
     setSelectedSlot(null);
@@ -531,109 +569,41 @@ export default function Home() {
     setMessage("Escolha outro horário para remarcar ou cancele a reserva atual.");
   };
 
-  const handleDownloadPdf = useCallback(async () => {
-    if (!supabase) {
-      setErrorMessage("Configuração do banco ausente. Configure o Supabase para exportar o PDF.");
-      return;
-    }
-
-    setIsExportingPdf(true);
-    setErrorMessage(null);
-    setMessage(null);
-
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("event_date, slot_time, person1, person2, phone1")
-      .eq("status", "active")
-      .order("event_date", { ascending: true })
-      .order("slot_time", { ascending: true });
-
-    if (error) {
-      setIsExportingPdf(false);
-      setErrorMessage("Erro ao gerar PDF. Tente novamente em instantes.");
-      return;
-    }
-
-    const exportRows = (data as BookingExportRow[]) ?? [];
-
-    if (exportRows.length === 0) {
-      setIsExportingPdf(false);
-      setMessage("Não há horários marcados para exportar no momento.");
-      return;
-    }
-
-    const { jsPDF } = await import("jspdf");
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const marginX = 40;
-    const marginTop = 48;
-    const marginBottom = 40;
-    const lineHeight = 18;
-    let y = marginTop;
-
-    doc.setFontSize(16);
-    doc.text("Relatório de horários marcados", marginX, y);
-    y += 22;
-
-    doc.setFontSize(11);
-    doc.text(
-      `Gerado em: ${new Date().toLocaleString("pt-BR")} | Total de reservas ativas: ${exportRows.length}`,
-      marginX,
-      y
-    );
-    y += 24;
-
-    doc.setFontSize(12);
-    doc.text("Data/Hora | Casal | Telefone", marginX, y);
-    y += 12;
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 14;
-
-    for (const row of exportRows) {
-      const line = `${formatDateToBrShort(row.event_date)} ${row.slot_time.slice(0, 5)} | ${row.person1} e ${row.person2} | ${formatPhoneToBr(row.phone1)}`;
-
-      if (y > pageHeight - marginBottom) {
-        doc.addPage();
-        y = marginTop;
-        doc.setFontSize(12);
-        doc.text("Data/Hora | Casal | Telefone", marginX, y);
-        y += 12;
-        doc.line(marginX, y, pageWidth - marginX, y);
-        y += 14;
-      }
-
-      const wrapped = doc.splitTextToSize(line, pageWidth - marginX * 2);
-      doc.setFontSize(11);
-      doc.text(wrapped, marginX, y);
-      y += wrapped.length * lineHeight;
-    }
-
-    const fileDate = new Date().toISOString().slice(0, 10);
-    doc.save(`horarios-marcados-${fileDate}.pdf`);
-
-    setIsExportingPdf(false);
-    setMessage("PDF gerado com sucesso.");
-  }, []);
-
   return (
-    <div className="relative min-h-screen">
+    <div className={`relative min-h-screen ${isLiteMode ? "lite-mode" : ""}`}>
       <div className="pointer-events-none fixed inset-0 z-0">
-        <picture className="absolute inset-0 block h-full w-full">
-          <source media="(min-width: 768px)" srcSet={desktopBgSrc} />
-          <img
-            src={mobileBgSrc}
-            alt=""
-            className="h-full w-full object-cover object-center"
-            loading="eager"
-            decoding="async"
-          />
-        </picture>
-        <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-white/10 to-[#fffdf8]/10"  />
-        <div className="absolute inset-0 backdrop-blur-[2px]" />
+        {!isLiteMode && (
+          <picture className="absolute inset-0 block h-full w-full">
+            <source media="(min-width: 768px)" srcSet={desktopBgSrc} />
+            <img
+              src={mobileBgSrc}
+              alt=""
+              className="h-full w-full object-cover object-center"
+              loading="eager"
+              decoding="async"
+            />
+          </picture>
+        )}
+        <div className={`absolute inset-0 ${isLiteMode ? "bg-[#fffdf8]" : "bg-gradient-to-b from-white/12 via-white/10 to-[#fffdf8]/10"}`}  />
+        {!isLiteMode && <div className="absolute inset-0 backdrop-blur-[2px]" />}
       </div>
 
       <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
+        <Link
+          href="/admin"
+          className="rounded-xl border border-[var(--brand)] bg-[var(--brand)] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:brightness-105"
+        >
+          Área admin
+        </Link>
+        <button
+          type="button"
+          onClick={() => setIsLiteMode((prev) => !prev)}
+          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+        >
+          {isLiteMode ? "Modo leve: ON" : "Modo leve: OFF"}
+        </button>
+      </div>
       <header className="panel-glow fade-up rounded-3xl border border-white/70 px-6 py-8 text-center sm:px-10">
         <p className="mb-3 inline-flex rounded-full bg-[var(--brand-soft)] px-4 py-1 text-xs font-semibold tracking-[0.2em] text-[var(--brand)] uppercase">
           Agenda Oficial
@@ -860,7 +830,6 @@ export default function Home() {
           </form>
 
           <div className="mt-6 border-t border-slate-400 pt-4">
-            <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => {
@@ -872,15 +841,6 @@ export default function Home() {
               >
                 Consultar reserva
               </button>
-              <button
-                type="button"
-                disabled={!canBook || isExportingPdf}
-                onClick={() => void handleDownloadPdf()}
-                className="w-full rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isExportingPdf ? "Gerando PDF..." : "Baixar horários em PDF"}
-              </button>
-            </div>
           </div>
 
           {errorMessage && (
