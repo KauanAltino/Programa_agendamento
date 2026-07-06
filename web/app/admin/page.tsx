@@ -491,18 +491,18 @@ export default function AdminPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-3 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold tracking-[0.2em] text-[var(--brand)] uppercase">
             Painel Admin
           </p>
-          <h1 className="mt-1 text-3xl text-slate-900">Reservas do encontro</h1>
+          <h1 className="mt-1 text-2xl text-slate-900 sm:text-3xl">Reservas do encontro</h1>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <Link
             href="/"
-            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             Voltar ao site
           </Link>
@@ -577,17 +577,17 @@ export default function AdminPage() {
                       void fetchAuditLogs();
                     }}
                     disabled={isLoadingLogs}
-                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 sm:w-auto sm:px-4 sm:text-sm"
                   >
-                    {isLoadingLogs ? "Carregando logs..." : "Ver logs"}
+                    {isLoadingLogs ? "Carregando logs..." : "(DEV)"}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleDownloadPdf()}
                     disabled={isExportingPdf || isLoadingBookings}
-                    className="rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60"
+                    className="w-full rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60 sm:w-auto sm:px-4 sm:text-sm"
                   >
-                    {isExportingPdf ? "Gerando PDF..." : "Baixar horários"}
+                    {isExportingPdf ? "Gerando PDF..." : "HORÁRIOS (PDF)"}
                   </button>
                 </div>
               </div>
@@ -614,7 +614,44 @@ export default function AdminPage() {
                 {isLoadingBookings && <span className="text-sm text-slate-500">Atualizando...</span>}
               </div>
 
-              <div className="mt-4 overflow-x-auto">
+              <div className="mt-4 space-y-3 md:hidden">
+                {bookings.length === 0 ? (
+                  <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                    Nenhuma reserva ativa encontrada.
+                  </div>
+                ) : (
+                  bookings.map((booking) => (
+                    <article key={booking.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <p className="text-sm font-semibold text-slate-900">{booking.person1} e {booking.person2}</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {formatDateToBrShort(booking.event_date)} às {booking.slot_time.slice(0, 5)}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-600">Categoria: {booking.class_name || "-"}</p>
+                      <p className="mt-1 text-xs font-medium tabular-nums text-slate-700">{formatPhoneToBr(booking.phone1)}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRequestReschedule(booking)}
+                          disabled={cancelingId === booking.id || isFinalizing}
+                          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                        >
+                          Remarcar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRequestCancel(booking)}
+                          disabled={cancelingId === booking.id || isFinalizing}
+                          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                        >
+                          {cancelingId === booking.id ? "Cancelando..." : "Cancelar"}
+                        </button>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-4 hidden overflow-x-auto md:block">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead>
                     <tr className="text-left text-slate-500">
@@ -845,26 +882,26 @@ export default function AdminPage() {
       {isLogsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">Logs de auditoria</h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Histórico de quem adicionou, cancelou e remarcou horários.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
                 <button
                   type="button"
                   onClick={handleDownloadLogsExcel}
                   disabled={isExportingLogs || isLoadingLogs}
-                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
                 >
                   {isExportingLogs ? "Exportando..." : "Baixar logs em Excel"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsLogsOpen(false)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   Fechar
                 </button>
@@ -872,7 +909,25 @@ export default function AdminPage() {
             </div>
 
             <div className="overflow-y-auto px-5 py-4">
-              <div className="overflow-x-auto">
+              <div className="space-y-3 md:hidden">
+                {auditLogs.length === 0 ? (
+                  <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                    {isLoadingLogs ? "Carregando logs..." : "Nenhum log encontrado."}
+                  </div>
+                ) : (
+                  auditLogs.map((log) => (
+                    <article key={log.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <p className="text-xs tabular-nums text-slate-500">{new Date(log.created_at).toLocaleString("pt-BR")}</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">{formatAuditAction(log.action)} • {log.actor_label}</p>
+                      <p className="mt-1 text-xs text-slate-700">{log.booking_person1} e {log.booking_person2}</p>
+                      <p className="mt-1 text-xs text-slate-600">Categoria: {log.class_name || "-"}</p>
+                      <p className="mt-1 text-xs text-slate-700">{getAuditScheduleLabel(log)}</p>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead>
                     <tr className="text-left text-slate-500">
