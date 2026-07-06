@@ -35,6 +35,8 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{secrets.NEXT_PUBLIC_SUPABASE_URL}}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}}
+          NEXT_PUBLIC_ADMIN_USERNAME_HASH: ${{secrets.NEXT_PUBLIC_ADMIN_USERNAME_HASH}}
+          NEXT_PUBLIC_ADMIN_PASSWORD_HASH: ${{secrets.NEXT_PUBLIC_ADMIN_PASSWORD_HASH}}
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
         run: npm --prefix web run build
 

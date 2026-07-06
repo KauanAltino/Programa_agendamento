@@ -5,6 +5,7 @@ create table if not exists public.bookings (
   event_date date not null,
   slot_time time not null,
   email text,
+  class_name text,
   person1 text not null,
   person2 text not null,
   phone1 text not null,
@@ -14,7 +15,25 @@ create table if not exists public.bookings (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  action text not null,
+  actor_role text not null,
+  actor_label text not null,
+  booking_id uuid,
+  booking_person1 text not null,
+  booking_person2 text not null,
+  class_name text,
+  phone1 text,
+  from_event_date date,
+  from_slot_time time,
+  to_event_date date,
+  to_slot_time time,
+  created_at timestamptz not null default now()
+);
+
 alter table public.bookings add column if not exists email text;
+alter table public.bookings add column if not exists class_name text;
 alter table public.bookings add column if not exists status text not null default 'active';
 alter table public.bookings add column if not exists canceled_at timestamptz;
 alter table public.bookings drop column if exists reservation_code;
@@ -33,6 +52,7 @@ where status = 'active';
 drop index if exists bookings_reservation_code_unique;
 
 alter table public.bookings enable row level security;
+alter table public.audit_logs enable row level security;
 
 drop policy if exists "Allow insert for everyone" on public.bookings;
 create policy "Allow insert for everyone"
@@ -53,3 +73,15 @@ on public.bookings
 for update
 using (true)
 with check (true);
+
+drop policy if exists "Allow insert audit logs for everyone" on public.audit_logs;
+create policy "Allow insert audit logs for everyone"
+on public.audit_logs
+for insert
+with check (true);
+
+drop policy if exists "Allow read audit logs for everyone" on public.audit_logs;
+create policy "Allow read audit logs for everyone"
+on public.audit_logs
+for select
+using (true);

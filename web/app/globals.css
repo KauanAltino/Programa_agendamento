@@ -37,8 +37,21 @@ h3 {
   box-shadow: 0 20px 45px rgba(15, 23, 42, 0.1);
 }
 
+.lite-mode .panel-glow {
+  background: #ffffff;
+  box-shadow: none;
+}
+
 .fade-up {
   animation: fadeUp 0.6s ease forwards;
+}
+
+.lite-mode .fade-up,
+.lite-mode .stagger-1,
+.lite-mode .stagger-2,
+.lite-mode .stagger-3,
+.lite-mode .stagger-4 {
+  animation: none;
 }
 
 .stagger-1 {
